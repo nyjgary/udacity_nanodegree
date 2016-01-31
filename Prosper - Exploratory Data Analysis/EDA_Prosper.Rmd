@@ -1,0 +1,1120 @@
+# Exploration of Prosper data 
+#### _Gary Ng_ 
+
+## Introduction 
+
+Peer-to-peer (P2P) lending may not be a familiar concept to most, but online marketplaces that connect individual borrowers with individual investors (i.e. people like you and me, not 'Big Banks') have existed in the United States for nearly a decade and saw considerable growth. 
+
+In this study, I will be exploring a rich dataset provided by Prosper, the first P2P lending marketplace founded in 2005. Prosper is a two-sided marketplace where loan requests from borrower members are listed for investor members to choose to fund; each loan may be funded by more than one investor, and investor members are encouraged to diversify their risk by partially funding over than a hundred loans. 
+
+This study is meant as an exploratory data analysis aimed to develop an initial understanding of Prosper's business. Specifically, we are interested in answering three broad questions: 
+
+1. What are the characteristics of Prosper's borrower members? 
+2. What is the nature of the loans originated? 
+3. How has Prosper's business grown over the past years? 
+
+## Data Set
+
+The dataset contains all 113,937 records of loans listed on Prosper's marketplace since the company's inception. There are 81 variables in the original dataset, including demographic and credit information about borrowers, details and statuses of the loans, and much more. We will work with a subset of 31 variables listed below that are of interest for our research questions. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load_Packages}
+
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(reshape2)
+library(GGally)
+library(RColorBrewer)
+library(stringr)
+library(maps)
+library(choroplethr)
+library(scales)
+library(ggthemes)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Load_Data}
+
+## Load dataset (with 81 variables)
+
+setwd("/Users/garyng/Documents/Udacity/Nanodegree/P4")
+prosper <- read.csv("prosperLoanData.csv")
+
+## Reduce dataset to 33 variables of interest  
+
+select_var <- c("ListingKey","ListingCreationDate", "Term", "LoanStatus", "BorrowerRate", "EstimatedEffectiveYield", "EstimatedLoss", "EstimatedReturn", "ProsperRating..numeric.", "ProsperRating..Alpha.", "ProsperScore", "ListingCategory..numeric.", "BorrowerState", "Occupation", "EmploymentStatus", "CreditScoreRangeLower", "CreditScoreRangeUpper", "RevolvingCreditBalance", "BankcardUtilization", "DebtToIncomeRatio", "IncomeRange", "IncomeVerifiable", "StatedMonthlyIncome", "ProsperPrincipalBorrowed", "LoanNumber", "LoanOriginalAmount", "LoanOriginationDate", "LoanOriginationQuarter", "MemberKey", "PercentFunded", "InvestmentFromFriendsCount", "InvestmentFromFriendsAmount", "Investors")
+prosper <- prosper[select_var] 
+str(prosper)
+
+```
+
+Let us first clarify what each record represents. According to the documentation, each record is a listing created by a borrower seeking a loan. Only when the listing receives sufficient bids from lenders to reach the amount requested will it become a loan. 
+
+One would expect at least some listings to be unfunded. However, every listing in the dataset had a valid ```LoanNumber``` and ```LoanOriginationDate```, suggesting all of them were eventually funded. The natural assumption is that Udacity pre-processed the data and removed unfunded listings, or that Prosper did not provide them in the first place. Regardless, this allows us to simply treat each record as a loan. 
+
+However, when inspecting these variables, I noticed that there were multiple records that share the same ```LoanNumber``` which seems odd. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Duplicate_Records}
+
+## Get LoanNumbers with more than 1 record 
+
+UniqueLoanNumber <- group_by(prosper,LoanNumber)
+prosper.by_LoanNumber <- summarise(UniqueLoanNumber,n=n())
+prosper.by_LoanNumber <- arrange(prosper.by_LoanNumber, desc(n))
+head(prosper.by_LoanNumber)
+
+```
+
+One theory could be that the borrower reposted the same request after his previous one expired without getting funded, and when the request finally got approved, all related listings might have been populated with the same ```LoanNumber```. However, inspection of one such instance (#126059) suggests this is not the case. All six records associated with this ```LoanNumber``` had the same ```ListingKey```, ```ListingCreationDate```, and ```EstimatedEffectiveYield```. In fact, every field was identical with the sole exception of ```ProsperScore```, a custom risk score that Prosper built using historical data. There does not appear to be a justification for these duplicate records. Fortunately, only approximately 1.5% of the records were affected. For the purpose of our analysis, we will remove these duplicates and assume the integrity of the remaining dataset is intact. This leaves us with 112,239 records.  
+
+```{r echo=FALSE, warning=FALSE, include = FALSE, Check_Specific_Instance}
+
+## Check a specific instance 
+
+prosper[prosper$LoanNumber == 126059, c("LoanNumber", "LoanOriginalAmount", "LoanOriginationDate" , "ListingKey", "ListingCreationDate", "Term", "BorrowerRate", "EstimatedEffectiveYield", "LoanStatus", "RevolvingCreditBalance", "ProsperRating..Alpha.","ProsperScore", "MemberKey")]
+
+```
+
+```{r echo=FALSE, warning=FALSE, Delete_Duplicates}
+
+## Delete all records that are duplicates 
+
+duplicate_loans <- filter(prosper.by_LoanNumber,n>1)
+prosper$duplicate <- ifelse(prosper$LoanNumber %in% duplicate_loans$LoanNumber, TRUE, FALSE)
+prosper <- prosper[!(prosper$LoanNumber %in% duplicate_loans$LoanNumber),]
+nrow(prosper)
+
+```
+
+Now that we have established each record as a loan, let us explore the relationship between loans and borrowers. The documentation mentioned "a borrower may only have one active listing at a particular moment in time", but a borrower could well have borrowered more than once over the span of ten years considered. The table and histogram below shows the distribution of loans per member. Of 90,161 unique borrowers, a vast majority of ~83% had only 1 loan, ~12% had 2 loans, and none had more than 9 loans. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Listings_Per_Borrower}
+
+## Plot number of loans / listings per borrower 
+
+#length(unique(prosper$MemberKey))
+UniqueMemberKey <- group_by(prosper,MemberKey)
+prosper.by_MemberKey <- summarise(UniqueMemberKey,n=n())
+prosper.by_MemberKey <- arrange(prosper.by_MemberKey, desc(n))
+ggplot(aes(x=n), data = prosper.by_MemberKey) + 
+  geom_bar(aes(y=(..count..)/sum(..count..))) +
+  geom_bar(aes(y=(..count..)/sum(..count..)), fill = "#FF9999") +
+  scale_x_discrete(name = "No. of loans per borrower", breaks = seq(1,9,1)) + 
+  scale_y_continuous(name = "Percentage of borrowers", labels=percent) +
+  ggtitle("No. of loans per borrower") +
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+```
+
+The relationship between borrowers and loans is important because we are interested in understanding Prosper's borrower profile. If the distribution was highly skewed (i.e. a few borrowers having many loans), then it might be worth collapsing multiple records of the same borrower into a single record to avoid "distorting" the customer profile. Fortunately, this is not critical for our dataset (at least in the exploratory phase) since the vast majority of borrowers had only one loan and none had disproportionately many in our dataset. Moreover, one could argue that members with multiple loans deserve greater weights in the borrower profile.  Regardless, we will assume that each record represents a listing, a loan, and a borrower for sake of simplicity. 
+
+We are now ready to dive into our analysis proper (pun intended)! 
+
+## Analysis | Part 1: Borrowers  
+
+Firstly, I am curious about the borrowers. Are they mostly from the West Coast, where Prosper is based? What do they do for a living? Are they white-collar yuppies with good income looking to 'leverage up' their lifestyles, or blue-collar workers borrowing to make ends meet? How risky are these borrowers? We will explore these questions in this section.  
+
+### _Where are they from?_ 
+
+The map below shows that Prosper does have the highest concentration of users in its home state of California, but there are also signficant swaths of users in New York, Texas, Florida, and Illinois - also the largest states by population. We will dig into population-adjusted user count in a later section, but initial evidence suggests that Prosper's borrower base may be more geographically diverse than I had anticipated. 
+
+```{r echo=FALSE, warning=FALSE, States}
+
+## Plot borrower count on a map of states
+
+# Load state data and convert state code to lowercase state names 
+data(state)
+prosper$region <- tolower(state.name[match(prosper$BorrowerState,state.abb)])
+
+# Create df with borrower count by state 
+df.state.borrowercount <- summarise(group_by(prosper, region), BorrowerCount=n())
+
+# Import states map 
+states_map <- map_data("state")
+
+# Obtain one set of coordinates for each state for layering state code 
+cnames <-aggregate(cbind(long, lat) ~ region, data = states_map, 
+                   FUN = function(x) mean(range(x)))
+simpleCap <- function(x) {
+  s <- strsplit(x, " ")[[1]]
+  paste(toupper(substring(s, 1,1)), substring(s, 2),
+      sep="", collapse=" ")
+}
+cnames$region <- sapply(cnames$region, simpleCap) 
+cnames$State <- state.abb[match(cnames$region, state.name)]
+cnames$angle <-0
+
+# Adjust positioning of state codes 
+cnames[9, c("long")] <- c(-81.5) # FL
+cnames[4, c("long")] <- c(-120) # CA
+cnames[20, c("lat")] <- c(42.5) # MA
+cnames[21, c("long", "lat")] <- c(-85, 44) # MI
+cnames[28, c("long")] <- c(-70.5) # NH
+cnames[45, c("long", "lat")] <- c(-78, 37.5 ) # VA
+cnames[32, c("lat")] <- c(36) # NC
+
+# Plot 
+ggplot(df.state.borrowercount, aes(map_id = region)) +
+    geom_map(aes(fill = BorrowerCount), map = states_map) +
+    expand_limits(x = states_map$long, y = states_map$lat) +
+  theme_few() + 
+  theme(legend.position = "bottom",
+        axis.ticks = element_blank(), 
+        axis.title = element_blank(), 
+        axis.text =  element_blank(),
+        panel.border = element_blank()) +
+  scale_fill_continuous(name="No of borrowers",
+                        low = "thistle2", high = "darkred") +
+  geom_text(data=cnames, aes(long, lat, label = State,  
+                             angle=angle, map_id =NULL), size=3.5) + 
+  guides(fill = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  ggtitle("No. of borrowers by home state") +
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+```
+
+### _What do they do for work?_ 
+
+Propser tracked 68 different categories for ```Occupation```, which offers more granularity than we need. For instance, "Student" is subdivided into "Student - College Freshman", "Student - College Sophomore", "Student - College Junior", etc. The same applies for "Tradesmen", "Engineer", and "Food Service". I collapsed these categories and examined the 30 most common occupation groups. 
+
+```{r echo=FALSE, warning=FALSE, include = FALSE, Occupation_All}
+
+# List all categories
+sort(unique(prosper$Occupation))
+
+# Collapse some categories 
+prosper$Occupation <- as.character(prosper$Occupation) # convert to chr 
+prosper <- within(prosper, Occupation <- ifelse(grepl("Engineer", Occupation), "Engineer", ifelse(grepl("Sales", Occupation), "Sales", ifelse(grepl("Student", Occupation),"Student", ifelse(grepl("Tradesman",Occupation),"Tradesman",ifelse(grepl("Nurse",Occupation),"Nurse",ifelse(grepl("Food",Occupation),"Food Service", Occupation))))))) 
+prosper$Occupation <- as.factor(prosper$Occupation) # convert back to factor
+
+```
+
+The chart below shows a good mix of traditionally "high-income jobs" such as computer programmer and engineer, vs. traditionally "low-income jobs" such as construction and laborer. In fact, high-income jobs like "Sales", "Computer Programmer", and "Executive" rank amongst the top 5 occupations. This suggests that Prosper appeals to a broad user base and is not simply regarded as an alternative to pay-day loan companies helping lower-income borrowers make ends meet. 
+
+(Note: The occupations' income types were assigned at the author's discretion) 
+
+```{r echo=FALSE, warning=FALSE, Occupation_Top}
+
+### Plot Top 30 occupations by borrower count 
+
+# Create df with top 30 occpuations 
+df.occupation <- summarise(group_by(prosper, Occupation), n=n())
+df.occupation <- subset(df.occupation, Occupation != "" & Occupation != "Other") 
+df.occupation <- df.occupation[order(-df.occupation$n),]
+df.occupation <- df.occupation[1:30,]
+
+# Append occupation with high/low income type 
+occupation_income <- read.csv("Occupation.csv")
+df.occupation <- merge(df.occupation, occupation_income, by="Occupation")
+
+# Plot 
+ggplot(aes(x=reorder(Occupation, n), y=n), data = df.occupation) + 
+  geom_bar(stat = "identity", aes(fill = df.occupation$IncomeType)) + 
+  scale_fill_manual(values = c("#FF9999", "#99CCFF"),
+                    name = "Occupation type", 
+                    labels = c("High Income", "Low Income")) +
+  coord_flip() + 
+  xlab("Occupation") +
+  ylab("No. of borrowers") + 
+  ggtitle("Top 30 occupations amongst borrowers") +
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+```
+
+With a median of $56,000, the income distribution of Prosper borrowers roughly mirrors that of the general U.S. population, corroborating our belief that they come from all walks of life. In fact, the borrowers may even skew toward high-income workers, as more than 15% of them have incomes in excess of $100,000. The skeptical reader might wonder if these numbers were inflated. For what it is worth, the dataset contains a variable called "IncomeVerifiable" indicating whether borrowers provided documentation to support their stated incomes. Filtering for that does not change the income distribution appreciably, which gives us some comfort about the veracity of the data. 
+
+```{r echo=FALSE, warning=FALSE, Income_Level}
+
+### Plot income level distribution 
+
+# Differentiate between verified vs. non-verified income
+prosper$IncomeVerifiable = factor(prosper$IncomeVerifiable, levels = c("True", "False")) 
+assign_colors_income <- c("#FF9999", "#999999")
+
+# Plot the chart
+ggplot(aes(x=IncomeRange, fill = IncomeVerifiable), data = prosper) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  scale_y_continuous(labels=percent, breaks = seq(0,.3,.05)) + 
+  scale_fill_manual(values=assign_colors_income) + 
+  ggtitle("Percentage of borrowers by income range") + 
+  xlab("Income range") + 
+  ylab("Percentage of borrowers") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+### Use numerical AnnualIncome to get additional color on income distribution
+prosper$AnnualIncome <- prosper$StatedMonthlyIncome * 12
+summary(prosper$AnnualIncome)
+# quantile(prosper$AnnualIncome, 0.9, na.rm = TRUE) 
+
+```
+
+### _How risky are they?_ 
+
+Perhaps the most important question to ask about the borrowers is: how risky are they? Are they over-leveraged borrowers seeking loans through Prosper because they couldn't fulfill their financing needs through traditional means? To answer this question, I looked at four key credit metrics: ```RevolvingCreditBalance```, ```BankcardUtilization```, ```DebtToIncomeRatio```, and ```CreditScore```. (Note: ```CreditScore``` was derived as the midpoint of ```CreditScoreRangeUpper``` and ```CreditScoreRangeLower``` that Prosper provided)
+
+Firstly, let's get a quick sense of the data by looking at the scatterplot matrix. Note that there are too many data points to make for a meaningful scatterplot, so I showed a random sample of 1000 loans originated in 2014 instead. One observation is that these variables are not as correlated as we might have expected. With the exception of the strong negative correlation of -.45 between ```CreditScore``` and ```BankcardUtilization```, the relationships between other variables are quite weak. This perhaps imply that each metric adds incremental information about the borrower, in turn justifying why Prosper and other lending firms incorporate many credit variables in their risk models. 
+
+```{r echo=FALSE, warning=FALSE, Credit_Scatterplot}
+
+## Create scatterplot matrix of 1000 randomly selected loans originated in 2014
+
+# Create new variable CreditScore 
+prosper$CreditScore <- round(0.5 * (prosper$CreditScoreRangeLower +
+                                      prosper$CreditScoreRangeUpper))
+
+# Create df of 1000 data points 
+prosper$LoanOriginationYear <- str_sub(prosper$LoanOriginationQuarter,-4,-1)
+df.credit <- subset(prosper[,c("RevolvingCreditBalance", "BankcardUtilization", "DebtToIncomeRatio", "CreditScore")], prosper$LoanOriginationYear == 2014) 
+
+# Plot a sample of 1000 data points
+set.seed(888)
+ggpairs(df.credit[sample.int(nrow(df.credit),1000),],
+        title = "Borrower credit metrics (for a random sample of 1000 loans originated in 2014)") +
+    theme(plot.title = element_text(lineheight=.8, size = 10),
+          axis.title = element_text(size = 8))
+
+```
+
+Next, let's take a look at the summary statistics of the full dataset for these variables. The median borrower has ~$8000 in ```RevolvingCreditBalance```, 60% ```BankcardUtilization```, ```DebtToIncomeRatio``` of 0.22, and a ```CreditScore``` of 690. Sounds like pretty credit-worthy borrower profile to me. 
+
+```{r echo=FALSE, warning=FALSE, Credit_SummaryStats}
+
+## Check summary statistics (of full data set)
+
+df.credit.full <- subset(prosper[,c("RevolvingCreditBalance", "BankcardUtilization", "DebtToIncomeRatio", "CreditScore")]) 
+
+summary(df.credit.full)
+
+```
+
+Now, let's examine the distribution of these variables. I should first caveat that ```RevolvingCreditBalance``` and ```DebtToIncomeRatio``` have very long tails, thus for presentation purposes they are only plotted up to their 99th percentiles of $151K and .87 respectively. In addition ```BankcardUtilization``` was also capped at the theoretical maximum of 1.0. 
+
+The charts below are consistent with our initial assessment that the borrowers' credit profile is pretty strong. For instance, the vast majority of borrowers carry debt less than 50% of their income, and nearly a quarter have credit scores at or above 740, commonly the benchmark for "excellent credit". Perhaps the one area of potential concern is ```BankcardUtilization```, which seems a tad high with nearly 30% of borrowers having 80% utilization or higher. Yet, it explains why these borrowers may be seeking alternative sources of funding in the first place. 
+
+```{r echo=FALSE, warning=FALSE, Credit_Plots}
+
+## Create plot for RevolvingCreditBalance 
+
+p1 = ggplot(aes(x=RevolvingCreditBalance), data = prosper) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)),
+                 binwidth = 5000, color="#993333", fill = "#FF9999") + 
+  scale_x_continuous(limits = c(0,151000), breaks = seq(0,151000,50000)) +
+  scale_y_continuous(name = "Percentage of borrowers", labels=percent) + 
+  ggtitle("Revolving credit balance") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        axis.title.x = element_blank())
+
+## Create plot for BankCardUtilization
+
+# Capped utilization at 1 
+prosper$BankcardUtilization_r <- ifelse(prosper$BankcardUtilization > 1, 
+                                      1, prosper$BankcardUtilization)
+# Plot
+p2 = ggplot(aes(x=BankcardUtilization_r), data = prosper) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)), 
+                 binwidth = .05, color="#993333", fill = "#FF9999") + 
+  scale_x_continuous(name = "BankcardUtilization",
+                     labels=percent, limits = c(0,1), breaks = seq(0,1,.1)) + 
+  scale_y_continuous(name = "Percentage of borrowers", labels=percent, 
+                     breaks = seq(0,.1,.02)) + 
+  ggtitle("Bankcard utilization") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        axis.title.x = element_blank())
+
+## Create plot for Debt-to-Income
+
+p3 = ggplot(aes(x=DebtToIncomeRatio), data = prosper) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)),
+                 binwidth = .05, color="#993333", fill = "#FF9999") + 
+  scale_x_continuous(limits = c(0,0.87), breaks = seq(0,0.87,.1)) + 
+  scale_y_continuous(name = "Percentage of borrowers", labels=percent) + 
+  ggtitle("Debt-to-income ratio") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        axis.title.x = element_blank())
+
+## Create plot for CreditScore
+
+p4 = ggplot(aes(x=CreditScore), data = prosper) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)),
+                 binwidth = 10, color="#993333", fill = "#FF9999") + 
+  scale_x_continuous(limits = c(400,900), breaks = seq(400,900,100)) + 
+  scale_y_continuous(name = "Percentage of borrowers", labels=percent) + 
+  ggtitle("Credit scores") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        axis.title.x = element_blank())
+
+## Arrange plots in grid 
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+```
+
+Thus far we have only explored the data set in aggregate, but we should be cognizant that these data points were amassed over a span of ten years, and the borrower profile could have changed drastically over time. As good measure, we will analyze the distribution of credit scores by year of loan origination as shown in the following chart. It appears that borrowers' ```CreditScore``` have actually improved over time. At the company's inception, we see that the median ```CreditScore``` (blue line) of borrowers was decidedly below 700 (black dotted line). However, in recent years it appears that the majority of borrowers have ```CreditScore``` above 700. 
+
+```{r echo=FALSE, warning=FALSE, Credit_Scores_Over_Time}
+
+## Plot distribution of credit scores over time 
+
+# Create df
+origination_years <- group_by(prosper[prosper$CreditScore != "", ], 
+                              LoanOriginationYear)
+df.credit <- summarise(origination_years, 
+                     CreditScoreMean = mean(CreditScore), 
+                     CreditScoreMedian = median(CreditScore),
+                     n = n())
+df.credit <- df.credit[-10,] # remove the NA's
+
+# Plot
+ggplot(aes(x=CreditScore), data = prosper[prosper$LoanOriginationYear>2005,]) +
+  geom_histogram(aes(y=(..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]),
+                 binwidth = 10, fill = "#FF9999") + 
+  scale_x_continuous(limits = c(400,900), breaks = seq(400,900,100)) + 
+  scale_y_continuous(name ="Percentage of borrowers", labels = percent) +  
+  facet_wrap(~LoanOriginationYear, scales = "free_y", nrow=3, ncol=3) + 
+  geom_vline(aes(xintercept = 700, color = "700 (Benchmark)"), linetype = 2 ) + 
+  geom_vline(data=df.credit, 
+             aes(xintercept = CreditScoreMedian, color = "Median by year")) +
+  scale_colour_manual("", values = c("700 (Benchmark)"="black", 
+                                     "Median by year"="blue")) +
+  ggtitle("Distribution of credit scores by year of loan origination") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        legend.position = "bottom")  
+
+```
+
+However, we should not jump to the hasty conclusion that Prosper borrowers' credit profile has been improving over time. A deeper scrutiny into the mean and median ```CreditScore``` suggests that there was indeed a huge improvement between 2006 and 2009, when the median improved 100 points from 610 to 710; however, the median ```CreditScore``` has held steady at 710 since then. Moreover, the mean had actually declined slightly from the peak of 715 in 2009 to 704 in 2014. Not that it is necessarily a bad thing: while Prosper should keep out the riskiest borrowers (which it does, by requiring a minimum credit score of 640), it may not be in Prosper's interest to raise the bar so high that it keeps other potential borrowers out of its marketplace. 
+
+```{r echo=FALSE, warning=FALSE, Credit_Scores_Mean_Median}
+
+## Display table of means and medians by origination year 
+
+df.credit
+
+```
+
+### _How does Prosper's proprietary credit metrics compare with external credit scores?_ 
+
+Prosper's dataset contains two different proprietary credit metrics: ```ProsperRating``` (AA, A, B, C, D, E, HR) and ```ProsperScore``` (1 through 11, with 11 being the "best"). It appears that most borrowers are assigned ```ProsperRating``` between A-D and ```ProsperScore``` between 4-8. (Note: the  analysis below is based on loans originated after 1-Aug-2009 as these metrics were implemented only after July 2009.) 
+
+```{r echo=FALSE, warning=FALSE, ProsperRating_ProsperScore}
+
+# Reorder ProsperRating..Alpha. from worst to best 
+
+prosper$ProsperRating..Alpha. = factor(prosper$ProsperRating..Alpha., levels = c("AA", "A", "B", "C", "D", "E", "HR", "")) 
+
+# prosper[prosper$ProsperRating..Alpha. == "", ]$ProsperRating..Alpha. <- NA
+
+# summary(prosper$ProsperRating..Alpha)
+prosper$LoanOriginationDate <- as.Date(prosper$LoanOriginationDate)
+
+p1 = ggplot(aes(x=ProsperRating..Alpha.), 
+            data = subset(prosper, prosper$LoanOriginationDate > "2009-09-01")) + 
+  geom_bar(aes(y=(..count..)/sum(..count..)),color="#993333", fill = "#FF9999") + 
+  scale_y_continuous(name = "Percentage of borrowers", labels = percent, 
+                     breaks = seq(0,.3,.05)) + 
+  xlab("Prosper Rating") + 
+  ggtitle("Percentage of borrowers by Prosper Rating") + 
+  theme(plot.title = element_text(lineheight=.8, size = 11))
+
+p2 = ggplot(aes(x=ProsperScore), 
+       data = subset(prosper, prosper$LoanOriginationDate > "2009-09-01")) + 
+  geom_bar(aes(y=(..count..)/sum(..count..)),color="#3399FF", fill = "#99CCFF") + 
+  scale_y_continuous(name = "Percentage of borrowers", labels = percent, 
+                     breaks = seq(0,.3,.05)) + 
+  scale_x_discrete(name = "Prosper Score", breaks = seq(1,11,1)) + 
+  ggtitle("Percentage of borrowers by Prosper Score") + 
+  theme(plot.title = element_text(lineheight=.8, size = 11))
+
+grid.arrange(p1,p2,ncol=2)
+
+```
+
+One naturally wonders what the difference between the two metrics is. 
+
+According to Prosper's 10K filings, ```ProsperScore``` is indicative of the probability of a loan going "bad", that is, "more than 60 days past due within twelve months of the application date". It is modeled based on the historical behavior of Prosper's borrower population, utilizing both credit report variables (e.g., inquiries last six months) as well as information derived from member-provided information (e.g., debt-to-income ratio). 
+
+```ProsperRating```, on the other hand, is derived primarily from that ```ProsperScore``` as well as credit scores obtained from external agencies, with each letter grade corresponding to an estimated annualized loan loss rate range. Since ```ProsperRating``` is largely derived from ```ProsperScore```, it should not be surprising to see a strong correlation between the two, as demonstrated in the box plot below.  
+
+```{r echo=FALSE, warning=FALSE, Prosper_Ratings_vs_Scores}
+
+## Boxplot of ProsperScore by ProsperRating(Alpha)
+
+ggplot(aes(ProsperRating..Alpha., ProsperScore), data = prosper) +  
+  geom_boxplot(aes(fill = ProsperRating..Alpha.)) + 
+  scale_y_discrete(name="Prosper Score", breaks=seq(1,11,1)) + 
+  scale_fill_brewer(palette="RdYlGn", direction = -1) + 
+  xlab("Prosper Rating") + 
+  ggtitle("Prosper Score vs. Prosper Rating") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12)) + 
+  guides(fill=guide_legend(title=NULL))
+
+```
+
+Next, we are also interested in the relationship between these two proprietary credit metrics with ```CreditScore``` from the external agency. Since all of these variables effectively measure the credit risk of the borrower, we would expect all three of them to be highly correlated. Previously, we have shown that is indeed the case for ```ProsperScore``` vs. ```ProsperRating```. 
+
+The box plots below show that ```ProsperScore``` and ```ProsperRating``` also correlated well with the ```CreditScore```. Except for a couple of slight anomalies, better ```ProsperRating``` ('AA' being best) and ```ProsperScore``` ('11' being the best) generally correspond to higher ```CreditScore```. However, it is interesting to note that there are several buckets of ```ProsperScore``` (2-4, 5-7, 8-9) that had the same interquartile range of ```CreditScore```. As further analysis, it would be interesting to know what differentiates the group with higher ```ProsperScore``` from those with lower ones within each of these buckets. 
+
+```{r echo=FALSE, warning=FALSE, Prosper_vs_External_Scores}
+
+## Plot CreditScore against ProsperRating(Alpha) and ProsperScore side-by-side
+
+# CreditScore vs. ProsperRating(Alpha)
+
+p1 = ggplot(aes(x=ProsperRating..Alpha., y=CreditScore), 
+            data = prosper[prosper$LoanOriginationDate > "2009-08-01", ]) +  
+  geom_boxplot(aes(fill = ProsperRating..Alpha.)) + 
+  scale_fill_brewer(palette="RdYlGn", direction = -1) + 
+  scale_y_continuous(name="Credit Score",limits=c(600,800),breaks=seq(600,800,20)) +
+  xlab("Prosper Rating") + 
+  ggtitle("Distribution of Credit Score vs. Prosper Rating") + 
+  theme(legend.position = "none",
+        plot.title = element_text(lineheight=.8, size = 12)) 
+
+# CreditScore vs. ProsperScore 
+
+prosper$ProsperScore_f <- factor(prosper$ProsperScore, levels = c("11", "10", "9", "8", "7", "6", "5", "4", "3", "2", "1", "")) 
+
+p2 = ggplot(aes(x=ProsperScore_f, y=CreditScore), 
+            data = prosper[prosper$LoanOriginationDate > "2009-08-01", ]) + 
+  geom_boxplot(aes(fill = ProsperScore_f)) + 
+  scale_fill_brewer(palette="RdYlGn", direction = -1) + 
+  scale_y_continuous(name="Credit Score",limits=c(600,800),breaks=seq(600,800,20)) +
+  xlab("Prosper Score") + 
+  ggtitle("Credit Score vs. Prosper Score") + 
+  theme(legend.position = "none",
+        plot.title = element_text(lineheight=.8, size = 12)) 
+
+grid.arrange(p1,p2,ncol=2)
+
+```
+
+## Analysis | Part 2: Loans  
+
+What is the typical size and tenure of these loans? What are these loans used for? Can borrowers get these loans quickly and at attractive rates? Who actually funds these loans? In this section, we will explore all of these questions.  
+
+### _What is the general nature of these loans?_ 
+
+First I am curious about the tenure of these loans. From Prosper's website, we know borrowers can only choose between 36-month and 60-month loans. I wonder if this held true in previous years. Plotting the distribution of ```Term``` across each year, we see that Prosper offered only 36-month loans at its inception, and then added 12-month and 60-month options in Q4 2010. However, Prosper dropped the 12-month option in Q2 2013 (presumably because it failed to gain traction with lenders and borrowers), leaving us with only two options today. 
+
+In this section we will restrict our analysis to loans originated after 2010, when borrowers have at least two ```Term``` options to choose from, and focus our analysis on shorter (36-month) vs. longer (60-month) term loans. We note that there exists a third option (12-month) prior to Q2 2013 but since it was never a popular option, it does not impact our analysis much. 
+
+We see that 36-month is by far the more popular option, accounting for just under 65% of all loans. While there is significant demand for longer tenure loans (>30%), it appears that Prosper made the right decision in launching with 36-month loans, if it had to pick one single loan ```Term```.  
+
+```{r echo=FALSE, warning=FALSE, Term_By_Year}
+
+prosper$Term <- factor(prosper$Term, levels = c("12","36","60"))
+
+ggplot(aes(x=Term), data = subset(prosper, LoanOriginationYear > 2005)) + 
+  geom_bar(aes(fill=Term)) + 
+  scale_fill_manual(values = c("#66CC99", "#3399FF", "#FF9999")) + 
+  xlab("Term (months)") + 
+  ylab("No. of borrowers") + 
+  ggtitle("Distribution of loans by term by year of origination") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12)) + 
+  facet_wrap(~LoanOriginationYear, ncol=9)
+
+```
+
+```{r echo=FALSE, warning=FALSE, Term_By_Quarter}
+
+## Pinpoint during which quarter the term options changed 
+
+# Reorder LoanOriginationQuarter factor levels (by year then quarter) 
+
+prosper$LoanOriginationQuarter <- factor(prosper$LoanOriginationQuarter, levels = c("Q4 2005", "Q1 2006", "Q2 2006","Q3 2006", "Q4 2006", "Q1 2007", "Q2 2007","Q3 2007", "Q4 2007", "Q1 2008", "Q2 2008","Q3 2008", "Q4 2008", "Q1 2009", "Q2 2009","Q3 2009", "Q4 2009", "Q1 2010", "Q2 2010","Q3 2010", "Q4 2010", "Q1 2011", "Q2 2011","Q3 2011", "Q4 2011", "Q1 2012", "Q2 2012","Q3 2012", "Q4 2012", "Q1 2013", "Q2 2013","Q3 2013", "Q4 2013", "Q1 2014"))
+
+# Create df and show table
+
+df.term <- summarise(group_by(prosper, Term, LoanOriginationQuarter), n=n()) 
+df.term.wide <- dcast(df.term, LoanOriginationQuarter ~ Term, 
+                      value.var = 'n')
+# df.term.wide 
+
+```
+
+In terms of loan sizes, we see that the majority of loans are relatively small, with nearly 55% of them under $10,000 and vast majority under $20,000. This is largely a function of Prosper's policy of allowing up to a maximum loan of $35,000, but it makes sense that Prosper does not accept overly huge loan requests because lenders are likely to prefer diversifying their risks over many small loans rather concentrating their risks in a large one. 
+
+```{r echo=FALSE, warning=FALSE, Size_Term}
+
+## Plot distribution of loan size and loan term side-by-side
+
+# Term
+
+p1 = ggplot(aes(x=Term),
+            data = subset(prosper, LoanOriginationYear>2010)) + 
+  geom_bar(aes(y=(..count..)/sum(..count..)),color="#993333", fill = "#FF9999") + 
+  scale_y_continuous(name = "Percentage of loans", labels = percent) + 
+  xlab("Term (months)") + 
+  ggtitle("Distribution of loans by term") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+# Size
+
+p2 = ggplot(aes(x=LoanOriginalAmount), 
+            data = subset(prosper, LoanOriginationYear>2010)) + 
+  geom_histogram(aes(y=(..count..)/sum(..count..)),
+                 binwidth = 5000, color="#3399FF", fill = "#99CCFF") + 
+  scale_y_continuous(name = "Percentage of loans", labels = percent) + 
+  scale_x_continuous(name = "Size (dollars)", limits = c(0,40000)) + 
+  ggtitle("Distribution of loans by size") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+grid.arrange(p1,p2,ncol=2)
+
+```
+
+In terms of ```ListingCategory```, "Debt Consolidation" is by far the most popular reason for obtaining loans from Prosper, accounting for 50.8% of all loans. There are also significant numbers of borrowers seeking loans for business and home improvement purposes. 
+
+```{r echo=FALSE, warning=FALSE, LoanCategory}
+
+## Plot distribution of loans by category
+
+# Import category name mapping and append to dataset
+
+loan_categories <- read.csv("MappingLoanCategory.csv")
+prosper <- merge(prosper, loan_categories, by = "ListingCategory..numeric.")
+
+# Create df with categories ranked in order 
+category_groups <- group_by(subset(prosper, LoanOriginationYear>2010),
+                            ListingCategory)
+df_category <- summarise(category_groups, n=n())
+df_category <- df_category[order(-df_category$n),]
+
+# Plot 
+ggplot(aes(x=reorder(ListingCategory, n), y=n), data = df_category) + 
+  geom_bar(color="#993333", fill = "#FF9999", stat="identity") + 
+  scale_y_continuous(name="Loan Count", trans = sqrt_trans(),
+                     breaks = seq(0,60000,10000)) + 
+  coord_flip() + 
+  ggtitle("Top loan categories by borrower counts") +
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+# % of loans that are for debt consolidation 
+
+# length(which(prosper$ListingCategory == "Debt Consolidation")) / nrow(prosper)
+
+```
+
+An interesting question is whether ```Term``` vary by ```ListingCategory```? For instance, one might expect "business" and "auto" loans to be longer-term, whereas loans for "household expenses", "vacation" and "taxes" to be used for bridging short-term cash flow gaps. However, the data did not support all of my intuition. Sure enough, "household expenses" and "vacation" were among the Top 3 categories with lowest percentage of 30-month loans. However, "wedding" loans turned out to have the highest percentage of 30-month loans, and "auto" the lowest, which ran counter to my intuition. Overall, however, there does not appear to be much variation in term composition across various ```ListingCategory```. 
+
+```{r echo=FALSE, warning=FALSE, LoanCategory_Term}
+
+## Plot distribution of loans by category by term 
+
+# Create DF including category and term (for select categories only)
+
+category_term_groups <- group_by(subset(prosper, LoanOriginationYear>2010), 
+                                 ListingCategory, Term)
+df_category_term <- summarise(category_term_groups, n=n())
+select_category <- c("Debt Consolidation", "Home Improvement", "Business",
+                     "Household Expenses", "Auto", "Medical and Dental",
+                     "Taxes", "Large Purchases", "Vacation", "Wedding Loans")
+df_category_term <- df_category_term[df_category_term$ListingCategory %in% select_category,]
+
+# Plot stacked bar chart
+
+ggplot(aes(x=ListingCategory, y=n, fill=Term), data = df_category_term) + 
+  geom_bar(position="fill", stat = "identity") + 
+  scale_y_continuous(name= "Percentage of loans within category", 
+                     labels = percent_format()) + 
+  xlab("Loan category") + 
+  coord_flip() + 
+  scale_fill_manual(values=c("#66CC99", "#3399FF", "#FF9999")) + 
+  ggtitle("Term composition by loan category") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Instead, loan size appears to be what drives the choice of loan term. On the LHS below, we see that 12-month loans are generally smaller than 36-month loans, which are in turn smaller than 60-month loans. On the RHS, we see the distribution of loan sizes by category, which may partially explain the counter-intuitive results we saw previously: "Auto" loans has one of the smallest average loan size, whereas "wedding" loans has one of the highest. 
+
+```{r echo=FALSE, warning=FALSE, LoanSize_Term_Purpose}
+
+## Create boxplot of loan amount by term 
+
+p1 = ggplot(aes(x=Term, y=LoanOriginalAmount), 
+            data = subset(prosper, LoanOriginationYear>2010)) + 
+  geom_boxplot(aes(fill = Term)) + 
+  scale_fill_manual(values=c("#66CC99", "#3399FF", "#FF9999")) + 
+  xlab("Term") + 
+  ylab("Size") + 
+  ggtitle("Loan size vs. loan term") + 
+  theme(legend.position = "none",
+        plot.title = element_text(lineheight=.8, size = 12))
+
+## Create boxplot of loan amount by loan category
+
+p2 = ggplot(aes(x=ListingCategory, y=LoanOriginalAmount), 
+       data = prosper[prosper$ListingCategory %in% select_category &
+                        prosper$LoanOriginationYear>2010, ]) + 
+  geom_boxplot(aes(fill = ListingCategory)) + 
+  scale_fill_brewer(palette="RdYlGn", direction = -1) + 
+  xlab("Loan category") + 
+  ylab("Size") + 
+  ggtitle("Loan size vs. loan category") + 
+  theme(legend.position = "none",
+        plot.title = element_text(lineheight=.8, size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Arrange plots in a grid
+
+grid.arrange(p1, p2, ncol=2)
+
+```
+
+### _Can borrowers obtain these loans quickly and at attractive rates?_ 
+
+We are interested in a metric that tells us how long it takes for a loan request to be funded. Let's call this ```TimeToFund``` and define it as the number of days between ```ListingCreationDate``` and ```LoanOriginationDate```, plotted below. Nearly 65% of requests funded within ten days, which seems reasonably quick, though we should caveat that there are loans that ultimately got funded and we do not have information about those that never did. 
+
+```{r echo=FALSE, warning=FALSE, Time}
+
+# Check summary statistics 
+
+prosper$ListingCreationDate <- as.Date(prosper$ListingCreationDate)
+prosper$TimeToFund <- as.numeric(
+  prosper$LoanOriginationDate - prosper$ListingCreationDate, units="days") 
+summary(prosper$TimeToFund)
+# quantile(prosper$TimeToFund, 0.99, na.rm = TRUE)
+
+# Plot histogram of TimeToFund
+
+ggplot(aes(x=TimeToFund), 
+       data = subset(prosper, LoanOriginationYear>2010)) + 
+  geom_histogram(aes(y=(..count..)/sum(..count..)),
+                 binwidth = 5, color="#993333", fill = "#FF9999") + 
+  scale_x_continuous(name = "Days taken to fund (since listing)",
+                     limits = c(0,75), breaks = seq(0,75,5)) + 
+  scale_y_continuous(name="Percentage of loans", labels= percent) +
+  ggtitle("Distribution of loans by time taken to fund") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12)) 
+  
+```
+
+Moreover, the speed of funding has increased over time, with the median ```TimeToFund``` improving steadily from 10 days in 2011 to merely 5 days in 2014. For the qualified borrower, Prosper certainly seems to be a quick funding source. 
+
+```{r echo=FALSE, warning=FALSE, Time_ByYear}
+
+# Create df of time by year 
+
+df.time <- summarise(group_by(subset(prosper, LoanOriginationYear>2010), LoanOriginationYear), median_days = median(TimeToFund)) 
+  
+# Facet histogram above by year 
+
+ggplot(aes(x=TimeToFund), 
+       data = subset(prosper, LoanOriginationYear>2010)) + 
+  geom_histogram(aes(y=(..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]),
+                 binwidth = 2, fill = "#FF9999") + 
+  scale_x_continuous(name = "Days taken to fund (since listing)",
+                     limits = c(0,50), breaks = seq(0,50,10)) + 
+  scale_y_continuous(name="Percentage of loans", labels= percent) + 
+  geom_vline(data = df.time, aes(xintercept = median_days,
+                                 color = "Median by year")) + 
+  scale_colour_manual("", values = c("Median by year"="blue")) +
+  facet_wrap(~LoanOriginationYear, nrow=4, ncol=1) + 
+  theme(aspect.ratio=0.2, legend.position = "right") 
+
+```
+
+The chart belows show the range of ```BorrowerRates``` for loans originated in 2014, broken down by ```ProsperRating```. The least risky AA-rated borrower enjoys fairly low interest rates of 7.5% on average. For each "rung" down the prosper rating (AA to A, A to B), the borrower pays an additional 4-6% interest on average, though the increase from D to E seems considerably larger. Indeed, borrowers with ```ProsperRating``` E or worse generally pay between 27-31% interest, which seems high considering the credit card APR for poor-credit folks typically ranges from 18-24%. Nevertheless, this is consistent with Prosper's policy to keep out the most risky borrowers (with credit scores below 640).     
+
+```{r echo=FALSE, warning=FALSE, BorrowerRate_ProsperRating}
+
+# Boxplot of borrower rate by prosper rating
+
+ggplot(aes(x=ProsperRating..Alpha., y=BorrowerRate), 
+       data = subset(prosper, LoanOriginationYear == 2014)) + 
+  geom_boxplot(aes(fill=ProsperRating..Alpha.)) + 
+  scale_fill_brewer(palette="RdYlGn", direction = -1) +
+  scale_y_continuous(name = "Borrower Rate", labels = percent, 
+                     breaks = seq(0, .4, .05)) + 
+  xlab("Prosper Rating") +
+  ggtitle("Borrower rates by Prosper rating") + 
+  theme(legend.position = "none",
+        plot.title = element_text(lineheight=.8, size = 12))   
+
+```
+
+In the previous box plots, it was not surprising that each ```ProsperRating``` had a tight range of ```BorrowerRate```. After all, ```ProsperRating``` represents the firm's view of the borrower's riskiness based on its proprietary algorithm, which in turn determines how much (interest) that borrower ought to be charged. 
+
+Now let's take a look at the relationship between ```BorrowerRate```, ```CreditScore```, and ```Term``` below. As expected, longer term loans command higher interest rates, and there is a negative correlation between ```BorrowerRate``` and ```CreditScore```. However, there is considerable spread in ```BorrowerRate``` among those with low ```CreditScore```. It is possible, albeit less likely, for a borrower with average to good ```CreditScore``` to obtain financing at rates comparable to those with excellent scores (e.g. below 10%). This confirms that Prosper's algorithm looks beyond ```CreditScore```, and that folks with low scores but otherwise strong credit profile could potentially stilll obtain cheap financing through its marketplace. 
+
+```{r echo=FALSE, warning=FALSE, BorrowerRate_CreditScore_Term}
+
+## Scatterplot of borrower rate vs. credit score, color by term
+
+# Create random sample of 1,000 data points
+
+set.seed(8)
+prosper_subset <- subset(prosper, LoanOriginationYear == 2014) 
+prosper_sample <- prosper_subset[sample.int(nrow(prosper_subset),5000), ]
+
+ggplot(aes(x=CreditScore, y=BorrowerRate), data = prosper_sample) + 
+  geom_point(aes(color = Term), alpha= .5, position = "jitter") + 
+  scale_x_continuous(name = "Credit Score", breaks = seq(600, 900, 50)) +
+  scale_y_continuous(name = "Borrower Rate", 
+                     labels = percent, breaks = seq(0,.35,.05)) + 
+  scale_color_manual(values=c("#3399FF", "#993333"),
+                     guide = guide_legend(title = "Term", reverse = T,
+                                          override.aes = list(alpha = 1, size=1))) +
+  geom_smooth(aes(color = Term)) +
+  ggtitle("Borrower Rate by Credit Score by Term") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12))   
+  
+```
+
+### _Who are funding these loans?_ 
+
+Prosper understands that lenders may be reluctant to put all egs in one basket and prefer to diversify their investments across many borrowers. Thus it allows loan requests to be funded by multiple lenders, requiring only a minimum of $25. Many investors take advantage of this option, with the median loan being funded by 45 investors. As seen in the bar chart below, there is also a very long tail, with a 99th percentile and maximum of 218 and 1189 investors respectively. On the other hand, nearly a quarter of the loans were each funded by only one person. These might be investors who perform significance due diligence on each borrower and thus have greater confidence that the borrower will ultimately pay back. 
+
+```{r echo=FALSE, warning=FALSE, Investors}
+
+## Histogram of loans by number of investors
+
+# Check summary statistics 
+
+summary(prosper$Investors)
+# quantile(prosper$Investors, .9)
+
+# Plot
+
+ggplot(aes(x=Investors), data = prosper) + 
+  geom_histogram(aes(y=(..count..)/sum(..count..)), 
+                 binwidth = 10, color="#993333", fill = "#FF9999") + 
+  scale_x_continuous(name = "No. of investors who funded the loan", 
+                     limits = c(0,250)) + 
+  scale_y_continuous(name = "Percentage of loans",
+                     labels = percent, breaks = seq(0, .35, .05)) +
+  ggtitle("Distribution of loans by number of investors") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12))   
+
+# Check what % of loans have only a single investor 
+
+length(which(prosper$Investors == 1)) / nrow(prosper)
+
+```
+
+The next chart shows the relationship between loan amount, term of loan, and number of investors. Firstly, we note that the minimum loan amount allowed by Prosper is $2000. Secondly, we also note that there is a theoretical ceiling in terms of number of borrowers for each loan amount due to Prosper's $25 minimum investment rule. However, few loans, especially larger loans, come close to hitting this ceiling as it requires every borrower to want to invest only $25. 
+
+One trend we might have expected to see is that longer-term loans needed to be funded by more investors because each individual investor might be more "skittish" about taking on a longer-term loan and thus inclined to invest less dollar per person. However, our sample data does not support this hypothesis. The expected number of investors is effectively the same for loans below $25,000, though they begin to diverge after, with longer-term loans requiring more investors as  expected. However, we should read this result with a grain of salt, given the relatively fewer data points we have for higher loan amounts.     
+
+```{r echo=FALSE, warning=FALSE, Investors_Size_Term}
+
+## Scatterplot of Loan Size vs. No. of Investors, colored by Term
+
+ggplot(aes(x=LoanOriginalAmount, y=Investors), data = prosper_sample) + 
+  geom_point(aes(color = Term), alpha= .5, position = "jitter") + 
+  scale_x_continuous(name = "Loan amount") +
+  scale_y_continuous(name = "Number of investors who funded the loan") + 
+  scale_color_manual(values=c("#3399FF", "#993333"),
+                     guide = guide_legend(title = "Term", reverse = T,
+                                          override.aes = list(alpha = 1, size=2))) +
+  ggtitle("Borrower rate by loan amount by term") + 
+  geom_abline(slope=1/25, lty = 2) + 
+  geom_vline(xintercept=2000, lty = 2)+
+  geom_smooth(aes(color = Term)) +
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        legend.position = "right") 
+
+```
+
+Prosper also facilitates and tracks lending from investors who are friends of the borrower. Theoretically, some might find Prosper's infrastructure helpful in formalizing loan agreements between friends, as an alternative to "handshake agreements" that might prove awkward down the road. However, this does not appear to have taken off, as fewer than 2% of loans historically were funded by at least one friend, and by 2014 the number has effectively dwindled to zero (only 3 out of 11324 loans had investment from friends). 
+
+```{r echo=FALSE, warning=FALSE, Friends}
+
+## Histogram of loans by number of investor friends 
+
+# Check summary statistics 
+
+# summary(prosper$InvestmentFromFriendsCount)
+# length(which(prosper$InvestmentFromFriendsCount == 0)) / nrow(prosper)
+
+# Wide-form table to show # of loans by investor count across years
+
+df.friend <- summarise(group_by(subset(prosper, LoanOriginationYear > 2006), 
+                                FriendsCount = InvestmentFromFriendsCount,
+                                LoanOriginationYear), n=n()) 
+df.friend.wide <- dcast(df.friend, 
+                        FriendsCount ~ LoanOriginationYear,
+                        value.var = 'n')
+df.friend.wide[is.na(df.friend.wide)] <- 0
+df.friend.wide
+
+```
+
+## Analysis | Part 3: Prosper's Growth 
+
+In this final section we want to examine Prosper's growth trends over the years since inception, both at the aggregate and state level. 
+
+### _How have loans originated grown over time on aggregate?_ 
+
+It appears that Prosper's business has gone through a rough patch during the recession, with number of loans and total loan amount plunging in 2009 and continuing to languish in 2010 at levels even lower than in the year of inception. In fact, there were rumors then about Prosper hemorrhaging cash and might soon be out of business. Fortunately, Prosper has recovered since, with number of loans and total loan amount originated growing at 200% and 250% CAGR since its lows in 2009. Prosper originated over 33K loans amounting to $353M in 2013 alone.   
+
+```{r echo=FALSE, warning=FALSE, Total_Loans}
+
+## Total loans and loan amount by year 
+
+df.total <- summarise(group_by(
+  prosper[prosper$LoanOriginationYear %in% c(2006:2013), ], LoanOriginationYear), 
+  total_number = n(), total_amount = sum(LoanOriginalAmount))
+  
+p1 = ggplot(aes(x=LoanOriginationYear, y=total_number, group = 1), 
+            data = df.total) + 
+  geom_line(stat="identity", size=1.5, color="#FF9999") + 
+  geom_point(stat= "identity", size=4, shape=21, color="#993333", fill="white") +
+  xlab("Loan origination year") + 
+  ylab("No. of loans") + 
+  ggtitle("No. of loans originated by year") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12)) 
+
+p2 = ggplot(aes(x=LoanOriginationYear, y=total_amount), data = df.total) + 
+  geom_bar(stat="identity", fill = "#99CCFF") + 
+  xlab("Loan origination year") + 
+  ylab("Total loan amount") + 
+  ggtitle("Sum of loan amount originated by year") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12)) 
+
+grid.arrange(p1, p2, ncol=2)
+
+```
+
+### _Is Prosper only popular in California or is it gaining traction across the U.S.?_ 
+
+Before we begin to answer this question, let's first address the assumption that Prosper is (most) popular in California. Previously, we have shown that an overwhelmingly large portion of Prosper borrowers reside in California. However, we did not account for population of states. I imported historical annual state population data from the census bureau and computed annual ```BorrowerDensity``` as the number of borrowers divided by its census population (in millions) in that specific year for each state. 
+
+The first chart below shows the ```BorrowerDensity``` for each state in 2007: it looks like after adjusting for population, the home state of Prosper actually lags behind a number of states such as Oregon, Utah, and Georgia. 
+
+```{r echo=FALSE, warning=FALSE, Adjusted_Borrower_Density}
+
+## Compare population-adjusted borrower density in 2007 vs. 2013 
+
+# Create df with 2007 and 2013 loan # and amount 
+
+df.state.year <- summarise(group_by(
+  prosper[prosper$LoanOriginationYear %in% c(2007, 2012, 2013), ], 
+  LoanOriginationYear, region, BorrowerState), 
+  n = n())
+
+df.state.year.wide <- dcast(df.state.year, 
+                            region + BorrowerState ~ LoanOriginationYear,
+                            value.var = 'n')
+names(df.state.year.wide)[names(df.state.year.wide)==2007] <- "n_2007"
+names(df.state.year.wide)[names(df.state.year.wide)==2012] <- "n_2012"
+names(df.state.year.wide)[names(df.state.year.wide)==2013] <- "n_2013"
+
+# Import population data and merge with df
+
+population <- read.csv("census_v2.csv")
+df.state.comb <- merge(df.state.year.wide, population, by="region")
+
+# Compute borrower density (defined as # borrowers per million population in state)
+
+df.state.comb$pop_2007 <- as.numeric(df.state.comb$X2007_Pop)
+df.state.comb$pop_2012 <- as.numeric(df.state.comb$X2012_Pop)
+df.state.comb$pop_2013 <- as.numeric(df.state.comb$X2013_Pop)
+df.state.comb$density_2007 <- df.state.comb$n_2007*1000000 / df.state.comb$pop_2007
+df.state.comb$density_2012 <- df.state.comb$n_2012*1000000 / df.state.comb$pop_2012
+df.state.comb$density_2013 <- df.state.comb$n_2013*1000000 / df.state.comb$pop_2013
+df.state.comb[is.na(df.state.comb)] <- 0
+
+```
+
+```{r echo=FALSE, warning=FALSE, Borrower_Density_2007}
+
+# Plot 2007 density map 
+
+ggplot(df.state.comb, aes(map_id = region)) +
+    geom_map(aes(fill = density_2007), map = states_map) +
+    expand_limits(x = states_map$long, y = states_map$lat) +
+  theme_few() + 
+  theme(legend.position = "bottom",
+        axis.ticks = element_blank(), 
+        axis.title = element_blank(), 
+        axis.text =  element_blank(),
+        panel.border = element_blank()) +
+  scale_fill_continuous(name = "Borrower density",
+                        low = "thistle2", high = "darkred", 
+                        limits=c(0, 200), guide="colorbar") +
+  geom_text(data=cnames, aes(long, lat, label = State,  
+                             angle=angle, map_id =NULL), size=3.5) + 
+  guides(fill = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  ggtitle("Borrower density by state - 2007") +
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+```
+
+Fast forward to 2013, California is _still_ not the most popular state of residence for Prosper borrowers. In fact, many states have caught up to similar levels and the highest ```BorrowerDensity``` is in Connecticut, Rhode Island, and Nevada. However, one might notice that with the  exception of North Dakota, Iowa, and Maine (where Prosper is not allowed to operate in these states currently), ```BorrowerDensity``` has increased across most of the remaining states to fairly similar levels, suggesting that Prosper has gained substantial traction across the U.S. 
+
+```{r echo=FALSE, warning=FALSE, Borrower_Density_2013}
+
+# Plot 2013 density map 
+
+ggplot(df.state.comb, aes(map_id = region)) +
+    geom_map(aes(fill = density_2013), map = states_map) +
+    expand_limits(x = states_map$long, y = states_map$lat) +
+  theme_few() + 
+  theme(legend.position = "bottom",
+        axis.ticks = element_blank(), 
+        axis.title = element_blank(), 
+        axis.text =  element_blank(),
+        panel.border = element_blank()) +
+  scale_fill_continuous(name = "Borrower density",
+                        low = "thistle2", high = "darkred", 
+                        limits=c(0, 200), guide="colorbar") +
+  geom_text(data=cnames, aes(long, lat, label = State,  
+                             angle=angle, map_id =NULL), size=3.5) + 
+  guides(fill = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  ggtitle("Borrower density by state - 2013") +
+  theme(plot.title = element_text(lineheight=.8, size = 12))
+
+```
+
+The bubble chart below summarizes the changes in ```BorrowerDensity``` between 2007 and 2013. With the exception of the aforementioned three states in which Prosper is currently not allowed to operate, all other states enjoyed positive grow rates. One might also notice that the states that started with lower ```BorrowerDensity``` in 2007 generally enjoyed higher growth between then and 2013, consistent with our observation earlier that states caught up to "roughly similar" levels by 2013. 
+
+```{r echo=FALSE, warning=FALSE, Borrower_Density_Change_2007}
+
+df.state.comb$change2007 <- df.state.comb$density_2013 - df.state.comb$density_2007
+
+ggplot(aes(x=density_2007, y=change2007), data=df.state.comb) +
+  geom_point(alpha = 0.5, aes(size = n_2013, color = n_2013), 
+             show.legend = FALSE) + 
+  scale_size_continuous(range = c(2, 30)) +
+  geom_text(aes(label=BorrowerState), size=3) +
+  geom_smooth(method = "lm") + 
+  scale_color_continuous(name = "Actual number \n of borrowers \n (2013)",
+                         low = "thistle2", high = "darkred") +
+  guides(fill = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  xlab("Borrower density (2007)") + 
+  ylab("Absolute growth in borrower density (2007-2013)") +
+  ggtitle("Growth in borrowers by state (2007-13)") +
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        legend.position = "right")
+
+```
+
+As useful as it might be to look at historical growth over a 6-year period, we might be interested to analyze Prosper's more recent growth rates to gauge its current momentum. Below we show a similar chart, but depicting growth between 2012 and 2013 instead and with Iowa, Maine, and North Dakotataken out. More recently, Prosper is still posting strong growth across the U.S. All states saw positive growth and most added between 25-60 more users per million population from 2012-13, which accounted for majority of growth over the 6-year period between 2007-13.
+
+Next we should clarify the sweeping statement made earlier about states catching up to "roughly similar" levels. Obviously, I meant it on a relative basis - compared to Prosper's earliest years. The disperson in borrower densities is much less now; however, residents from the highest-concentrated states like Connecticut and Maryland are still ~3x more likely to be Prosper borrowers than those from the least-concentrated states like Utah and New Mexico. California, surprisingly, ranks in the middle, perhaps even slightly below median. I guess Prosper's home state advantage might be diminished by the fact that California is such a large state, encompassing much more than just San Francisco. 
+
+From this chart, we can also see that Prosper is doing exceedingly well in the New England states of Rhode Island and Connecticut, which despite having the second and third highest ```BorrowerDensity``` in 2012, also grew the second and third fastest in the ensuing year. On the other hand, the Mountain states of New Mexico and Utah were laggard states with both low adoption rates and low growth rates.   
+
+```{r echo=FALSE, warning=FALSE, Borrower_Density_Change_2012}
+
+df.state.comb$change2012 <- df.state.comb$density_2013 - df.state.comb$density_2012
+
+ggplot(aes(x=density_2012, y=change2012), 
+       data=subset(df.state.comb, !BorrowerState %in% c("IA", "ME", "ND"))) +
+  geom_point(alpha = 0.5, aes(size = n_2013, color = n_2013), 
+             show.legend = FALSE) + 
+  scale_size_continuous(range = c(2, 30)) +
+  geom_text(aes(label=BorrowerState), size=3) +
+  scale_color_continuous(name = "Actual number \n of borrowers \n (2013)",
+                         low = "#CCFFFF", high = "#0066CC") +
+  guides(fill = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  xlab("Borrower density (2012)") + 
+  ylab("Absolute growth in borrower density (2012-2013)") +
+  ggtitle("Growth in borrowers by state (2012-13)") +
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        legend.position = "right")
+
+```
+
+## Summary
+
+#### _Key takeaway #1: Prosper borrowers are fairly credit worthy_
+
+Prosper borrowers' median credit score has improved from 610 at its inception to 710 by 2009 and held steady since. Most recently in 2014, more than a quarter of borrowers had excellent credit scores at or above 740, and none had scores below 640. 
+
+```{r echo=FALSE, warning=FALSE, Credit_Scores_Over_Time_Summary}
+
+## Plot distribution of credit scores over time - For summary
+
+ggplot(aes(x=CreditScore), data = prosper[prosper$LoanOriginationYear>2005,]) +
+  geom_histogram(aes(y=(..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]),
+                 binwidth = 10, fill = "#FF9999") + 
+  scale_x_continuous(limits = c(400,900), breaks = seq(400,900,100)) + 
+  scale_y_continuous(name ="Percentage of borrowers", labels = percent) +  
+  facet_wrap(~LoanOriginationYear, scales = "free_y", nrow=3, ncol=3) + 
+  geom_vline(aes(xintercept = 700, color = "700 (Benchmark)"), linetype = 2 ) + 
+  geom_vline(data=df.credit, 
+             aes(xintercept = CreditScoreMedian, color = "Median by year")) +
+  scale_colour_manual("", values = c("700 (Benchmark)"="black", 
+                                     "Median by year"="blue")) +
+  ggtitle("Distribution of credit scores by year of loan origination") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        legend.position = "bottom")   
+
+```
+
+#### _Key takeaway #2: There is a lot more to determining borrower rates than just credit scores and loan terms_
+
+On average, borrower rates are indeed lower for those seeking shorter loan terms, and those with higher credit scores. However, there is considerable variance left unexplained. For instance, borrowers with credit score of 650 may be charged anywhere from 10% to 31% interest for a 36-month loan. 
+
+```{r echo=FALSE, warning=FALSE, BorrowerRate_CreditScore_Term_Summary}
+
+## Scatterplot of borrower rate vs. credit score, color by term - For summary 
+
+ggplot(aes(x=CreditScore, y=BorrowerRate), data = prosper_sample) + 
+  geom_point(aes(color = Term), alpha= .5, position = "jitter") + 
+  scale_x_continuous(name = "Credit Score", breaks = seq(600, 900, 50)) +
+  scale_y_continuous(name = "Borrower Rate", 
+                     labels = percent, breaks = seq(0,.35,.05)) + 
+  scale_color_manual(values=c("#3399FF", "#993333"),
+                     guide = guide_legend(title = "Term", reverse = T,
+                                          override.aes = list(alpha = 1, size=1))) +
+  geom_smooth(aes(color = Term)) +
+  ggtitle("Borrower Rate by Credit Score by Term") + 
+  theme(plot.title = element_text(lineheight=.8, size = 12))   
+  
+```
+
+#### _Key Takeaway #3: California has the largest number of users in absolute terms, but not on population-adjusted basis_
+
+California ranks in the middle of pack both in terms of penetration and growth rates, lagging considerably behind states such as Maryland, Connecticut, Rhode Island. Overall, however, Prosper is seeing positive growth across all states where it is legally allowed to operate. 
+
+```{r echo=FALSE, warning=FALSE, Borrower_Density_Change_2012_Summary}
+
+ggplot(aes(x=density_2012, y=change2012), 
+       data=subset(df.state.comb, !BorrowerState %in% c("IA", "ME", "ND"))) +
+  geom_point(alpha = 0.5, aes(size = n_2013, color = n_2013), 
+             show.legend = FALSE) + 
+  scale_size_continuous(range = c(2, 30)) +
+  geom_text(aes(label=BorrowerState), size=3) +
+  scale_color_continuous(name = "Actual number \n of borrowers \n (2013)",
+                         low = "#CCFFFF", high = "#0066CC") +
+  guides(fill = guide_colorbar(barwidth = 10, barheight = 1)) + 
+  xlab("Borrower density (2012)") + 
+  ylab("Absolute growth in borrower density (2012-2013)") +
+  ggtitle("Growth in borrowers by state (2012-13)") +
+  theme(plot.title = element_text(lineheight=.8, size = 12),
+        legend.position = "right")
+
+```
+
+## Reflection
+
+I really enjoyed exploring this dataset. Not only was I able to answer questions I've always had about P2P lending (e.g. how it worked, who borrows and lends through such platforms), I also managed to sharpen my data manipulation skills in R and better appreciate the power of ggplots. I feel much more confident about tackling a new dataset, surveying it, and leveraging ggplots to create a variety of plots to identify and represent key statistical findings. 
+
+Of course, the project was not without its challenges. First of all, there were many variables in the dataset and it took a while for me to narrow down the scope of the analysis and determine the subset of variables I wanted to explore. Secondly, I had gotten stuck on several plot features I wanted to implement but were not covered in the course instructions, e.g. choropleth map, 100% stacked chart, adding median lines to facet wraps, and spent considerable time googling for the right solutions. I came to realize that knowing how best to phrase a coding question in Google and StackOverflow is a critical skill that data scientists should have. A third issue that might be unique to this dataset is that it was collected over a span of ten years. There were instances where analyzing the data in aggregate was appropriate, but others where it made more sense to restrict the analysis to only the recent data. On hindsight, I did so in a slightly haphazard manner and could have applied more structure to the analysis at the outset.     
+
+Of course, this study was meant as an exploratory data analysis and we are only beginning to scratch the surface of extracting valuable insights from the data. There are a number of additional analyses that I would love to explore for future work. Firstly, I would love to examine which other factors (besides term and credit score) may reconcile the ```ProsperRating``` and hence ```BorrowerRate``` charged, and effectively, back out Prosper's proprietary risk model. Secondly, I would explore the performance of Prosper loans in terms of deliquencies and loan losses. Last but not least, if I had access to the full listing data, I would love to know what proportion of listings get funded, and what characteristics predict whether a listing will be funded or not. 
+
+## References 
+
+- https://www.prosper.com/Downloads/Services/Documentation/ProsperDataExport_Details.html
+https://www.prosper.com/Downloads/Legal/prosper10k12312014.pdf
+- http://stackoverflow.com/questions/8005154/conditionally-remove-dataframe-rows-with-r
+- http://stackoverflow.com/questions/7963898/extracting-the-last-n-characters-from-a-string-in-r
+- http://www.inside-r.org/r-doc/datasets/state
+- https://gist.github.com/cdesante/4252133
+- http://stackoverflow.com/questions/17180115/manually-setting-group-colors-for-ggplot2
+- http://www.cookbook-r.com/Graphs/Legends_(ggplot2)/#modifying-the-appearance-of-the-legend-title-and-labels
+- http://www.ucl.ac.uk/~zctpep9/Archived%20webpages/Cookbook%20for%20R%20»%20Colors%20(ggplot2).htm
+- https://trinkerrstuff.wordpress.com/2013/08/14/how-do-i-re-arrange-ordering-a-plot-revisited/ 
+- http://stackoverflow.com/questions/16339204/normalizing-faceted-histograms-separately-in-ggplot2
+- https://www.census.gov/popest/data/state/totals/2013/tables/NST-EST2013-01.csv
+- http://www.noamross.net/blog/2013/11/20/formatting-plots-for-pubs.html
+- https://trinkerrstuff.wordpress.com/2013/07/05/ggplot2-chloropleth-of-supreme-court-decisions-an-tutorial/
+- http://rmarkdown.rstudio.com/authoring_basics.html
+- http://www.lendingmemo.com/lending-club-and-prosper-states/
+

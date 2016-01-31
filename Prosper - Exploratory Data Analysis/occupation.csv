@@ -1,0 +1,31 @@
+Occupation,IncomeType
+Professional,High
+Sales,High
+Computer Programmer,High
+Executive,High
+Teacher,Low
+Administrative Assistant,Low
+Analyst,High
+Nurse,Low
+Accountant/CPA,High
+Clerical,Low
+Engineer,High
+Skilled Labor,High
+Retail Management,Low
+Food Service,Low
+Construction,Low
+Truck Driver,Low
+Tradesman,Low
+Laborer,Low
+Police Officer/Correction Officer,Low
+Civil Service,Low
+Military Enlisted,Low
+Medical Technician,Low
+Attorney,High
+Social Worker,Low
+Student,Low
+Postal Service,Low
+Professor,High
+Realtor,High
+Doctor,High
+Waiter/Waitress,Low
