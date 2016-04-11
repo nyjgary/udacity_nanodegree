@@ -12,8 +12,8 @@ import pprint
 import operator 
 import os 
 
+os.chdir('/Users/garyng/Documents/Udacity/udacity_nanodegree/OSM - Data Wrangling')
 osm_file = open("boston.osm", "r")
-os.chdir('/Users/garyng/Documents/Udacity/Nanodegree/P3')
 
 ## Create a dictionary of street names by types 
 
@@ -33,7 +33,7 @@ def create_street_dict():
     for event, elem in ET.iterparse(osm_file): 
         if is_street_name(elem): 
             group_street_name(street_types, elem.attrib["v"])  
-    return street_types
+    return dict(street_types)
     
 street_dict = create_street_dict()
 
@@ -74,11 +74,20 @@ pprint.pprint(other_street_dict)
 
 ## Correct street types 
 
-mapping = { "St": "Street",
-            "St.": "Street", 
-            "Rd.": "Road",
-            "Ave": "Avenue"
-            }
+mapping = {"Ave": "Avenue", 
+           "Ave.": "Avenue", 
+           "ave": "Avenue", 
+           "Hwy": "Highway", 
+           "Pl": "Place", 
+           "ST": "Street", 
+           "Sq.": "Square", 
+           "St": "Street", 
+           "St.": "Street", 
+           "st": "Street", 
+           "street": "Street"
+           } 
+
+
 
 #def tally_street_type(street_types, street_name):
 #    m = street_type_re.search(street_name)
