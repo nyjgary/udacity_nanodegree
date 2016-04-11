@@ -12,11 +12,11 @@ CREATE TABLE nodes
 
 CREATE TABLE node_tags 
 (
+	id INTEGER, 
 	key TEXT, 
 	value TEXT, 
 	type TEXT, 
-	id INTEGER, 
-	FOREIGN KEY (id) REFERENCES nodes (id) 
+	id INTEGER
 ); 
 
 CREATE TABLE ways
@@ -31,19 +31,19 @@ CREATE TABLE ways
 
 CREATE TABLE way_tags
 (
+	id INTEGER, 
 	key TEXT, 
 	value TEXT, 
 	type TEXT, 
 	id INTEGER, 
-	FOREIGN KEY (id) REFERENCES ways (id) 
 ); 
 
 CREATE TABLE way_nodes
 (	
+	id INTEGER, 
 	node_id INTEGER, 
 	position INTEGER, 
-	id INTEGER, 
-	FOREIGN KEY (id) REFERENCES ways (id) 
+	id INTEGER
 ); 
 
 .mode csv 
