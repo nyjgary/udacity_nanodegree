@@ -47,8 +47,8 @@ CREATE TABLE way_nodes
 ); 
 
 .mode csv 
-.import nodes.csv nodes *FAILED*
+.import nodes.csv nodes 
 .import nodes_tags.csv node_tags 
-.import ways.csv ways *FAILED*
+.import ways.csv ways 
 .import ways_tags.csv way_tags 
 .import ways_nodes.csv way_nodes 
