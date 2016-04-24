@@ -6,9 +6,6 @@ import codecs
 import re
 import xml.etree.cElementTree as ET
 import string 
-
-# import cerberus
-# import schema
 import os 
 
 os.chdir('/Users/garyng/Documents/Udacity/udacity_nanodegree/OSM - Data Wrangling')
@@ -24,14 +21,17 @@ WAY_TAGS_PATH = "ways_tags_clean.csv"
 LOWER_COLON = re.compile(r'^([a-z]|_)+:([a-z]|_)+')
 PROBLEMCHARS = re.compile(r'[=\+/&<>;\'"\?%#$@\,\. \t\r\n]')
 
-# SCHEMA = schema.schema
-
 # Make sure the fields order in the csvs matches the column order in the sql table schema
 NODE_FIELDS = ['id', 'lat', 'lon', 'user', 'uid', 'version', 'changeset', 'timestamp']
 NODE_TAGS_FIELDS = ['id', 'key', 'value', 'type']
 WAY_FIELDS = ['id', 'user', 'uid', 'version', 'changeset', 'timestamp']
 WAY_TAGS_FIELDS = ['id', 'key', 'value', 'type']
 WAY_NODES_FIELDS = ['id', 'node_id', 'position']
+
+
+# ================================================== #
+#       1st step: shape XML element into a dict      #
+# ================================================== #
 
 
 def shape_element(element, node_attr_fields=NODE_FIELDS, way_attr_fields=WAY_FIELDS,
@@ -43,7 +43,6 @@ def shape_element(element, node_attr_fields=NODE_FIELDS, way_attr_fields=WAY_FIE
     way_nodes = []
     tags = []  # Handle secondary tags the same way for both node and way elements
 
-    # YOUR CODE HERE
     if element.tag == 'node':
       # Fill in the attributes under node 
       for var in node_attr_fields: 
@@ -100,6 +99,11 @@ def shape_element(element, node_attr_fields=NODE_FIELDS, way_attr_fields=WAY_FIE
       return {'way': way_attribs, 'way_nodes': way_nodes, 'way_tags': tags}
 
 
+# ================================================== #
+#  2nd step: takes raw dict and return cleaned dict  #
+# ================================================== #
+
+
 st_type_re = re.compile(r'\b\S+\.?$', re.IGNORECASE)
 
 st_types_good = ["Street", "Avenue", "Drive", "Square", "Broadway", "Place", 
@@ -117,7 +121,6 @@ st_types_mapping = {"Ave": "Avenue",
                    "St.": "Street", 
                    "st": "Street", 
                    "street": "Street",
-                   "Saints": "Saints corrected"
                    } 
 
 cities_good = ["Cambridge", "Boston", "Somerville", "Brookline", "Charlestown",
@@ -166,21 +169,6 @@ def get_element(osm_file, tags=('node', 'way', 'relation')):
             yield elem
             root.clear()
 
-
-#def validate_element(element, validator, schema=SCHEMA):
-#    """Raise ValidationError if element does not match schema"""
-#    if validator.validate(element, schema) is not True:
-#        field, errors = next(validator.errors.iteritems())
-#        message_string = "\nElement of type '{0}' has the following errors:\n{1}"
-#        error_strings = (
-#            "{0}: {1}".format(k, v if isinstance(v, str) else ", ".join(v))
-#            for k, v in errors.iteritems()
-#        )
-#        raise cerberus.ValidationError(
-#            message_string.format(field, "\n".join(error_strings))
-#        )
-
-
 class UnicodeDictWriter(csv.DictWriter, object):
     """Extend csv.DictWriter to handle Unicode input"""
 
@@ -218,16 +206,12 @@ def process_map(file_in, validate):
         way_nodes_writer.writeheader()
         way_tags_writer.writeheader()
 
-#        validator = cerberus.Validator()
-
         for element in get_element(file_in, tags=('node', 'way')):
             el = shape_element(element)
             el = clean_element(el)
             if el:
                 if validate is True:
                     pass
-#                    validate_element(el, validator)
-
                 if element.tag == 'node':
                     nodes_writer.writerow(el['node'])
                     node_tags_writer.writerows(el['node_tags'])
