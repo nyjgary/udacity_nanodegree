@@ -9,13 +9,18 @@ sys.path.append("../tools/")
 
 from feature_format import featureFormat, targetFeatureSplit
 from tester import dump_classifier_and_data
+from tester import test_classifier
 
 ### Task 1: Select what features you'll use.
 ### features_list is a list of strings, each of which is a feature name.
 ### The first feature must be "poi".
-features_list = ['other','expenses', 'bonus', 'deferred_income',
-                 'from_poi_to_this_person', 'salary',
-                 'from_this_person_to_poi_pct'] # You will need to use more features
+features_list = ['poi', 'salary', 'total_payments', 'exercised_stock_options',
+                 'bonus', 'restricted_stock', 'shared_receipt_with_poi',
+                 'total_stock_value', 'expenses', 'other', 
+                 'from_this_person_to_poi', 'deferred_income',
+                 'long_term_incentive', 'from_poi_to_this_person',
+                 'from_this_person_to_poi_pct', 'shared_receipt_with_poi_pct']                 
+                      
 ### Load the dictionary containing the dataset
 with open("final_project_dataset.pkl", "r") as data_file:
     data_dict = pickle.load(data_file)
@@ -39,15 +44,15 @@ data_dict['BHATNAGAR SANJAY']['director_fees'] = 0
 
 for person in data_dict: 
     try: 
-        data_dict[person]['from_this_person_to_poi_pct'] = data_dict[person]['from_this_person_to_poi'] / data_dict[person]['from_messages'] * 100
+        data_dict[person]['from_this_person_to_poi_pct'] = float(data_dict[person]['from_this_person_to_poi']) / data_dict[person]['from_messages'] * 100
     except TypeError:
         data_dict[person]['from_this_person_to_poi_pct'] = 'NaN'
     try: 
-        data_dict[person]['from_poi_to_this_person_pct'] = data_dict[person]['from_poi_to_this_person'] / data_dict[person]['to_messages'] * 100
+        data_dict[person]['from_poi_to_this_person_pct'] = float(data_dict[person]['from_poi_to_this_person']) / data_dict[person]['to_messages'] * 100
     except TypeError: 
         data_dict[person]['from_poi_to_this_person_pct'] = 'NaN'
     try: 
-        data_dict[person]['shared_receipt_with_poi_pct'] = data_dict[person]['shared_receipt_with_poi'] / data_dict[person]['to_messages'] * 100
+        data_dict[person]['shared_receipt_with_poi_pct'] = float(data_dict[person]['shared_receipt_with_poi']) / data_dict[person]['to_messages'] * 100
     except TypeError: 
         data_dict[person]['shared_receipt_with_poi_pct'] = 'NaN'
         
@@ -79,8 +84,8 @@ for variable in features_zeroed:
 
 my_dataset = df.to_dict(orient='index') # convert back to dict 
 ### Extract features and labels from dataset for local testing
-data = featureFormat(my_dataset, features_list, sort_keys = True)
-labels, features = targetFeatureSplit(data)
+#data = featureFormat(my_dataset, features_list, sort_keys = True)
+#labels, features = targetFeatureSplit(data)
 
 ### Task 4: Try a varity of classifiers
 ### Please name your classifier clf for easy export below.
@@ -107,6 +112,8 @@ clf = make_pipeline(MinMaxScaler(),
                                            max_features = None, 
                                            min_samples_split = 2,
                                            random_state = 42))
+
+test_classifier(clf, my_dataset, features_list, folds = 1000) 
 
 ### Task 6: Dump your classifier, dataset, and features_list so anyone can
 ### check your results. You do not need to change anything below, but make sure
